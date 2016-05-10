@@ -376,7 +376,15 @@ class ImportTask(AbstractImportTask):
 
 class ModelImportTaskMixin(object):
     def import_row(self, forms, cleaned_data):
-        return [form.save() for form in forms]
+        saved_forms = []
+
+        for form in forms:
+            form._errors = {}
+            saved_form = form.save()
+
+            saved_forms.append(saved_form)
+
+        return saved_forms
 
 
 class ImportShard(models.Model):
@@ -415,37 +423,40 @@ class ImportShard(models.Model):
 
             forms = [self.task.instantiate_form(form, data) for form in meta.forms]
 
-            if all([form.is_valid() for form in forms]):
-                # All forms are valid, let's process this shizzle
+            for form in forms:
+                form.is_valid()
 
-                cleaned_data = {}
-                for form in forms:
-                    cleaned_data.update(form.cleaned_data)
+            # Process valid forms
 
-                try:
-                    self.task.import_row(forms, cleaned_data)
-                except ValidationError, e:
-                    # We allow subclasses to raise a validation error on import_row
-                    errors = []
-                    if hasattr(e, 'message_dict'):
-                        for name, errs in e.message_dict.items():
-                            for err in errs:
-                                errors.append("{0}: {1}".format(name, err))
-                    else:
-                        # Pre 1.6, ValidationError does not necessarily have a message_dict
+            cleaned_data = {}
+            for form in forms:
+                cleaned_data.update(form.cleaned_data)
+
+            try:
+                self.task.import_row(forms, cleaned_data)
+            except (ValidationError, ValueError) as e:
+                # We allow subclasses to raise a validation error on import_row
+                errors = []
+                if hasattr(e, 'message_dict'):
+                    for name, errs in e.message_dict.items():
+                        for err in errs:
+                            errors.append("{0}: {1}".format(name, err))
+                else:
+                    if hasattr(e, 'messages'):
                         for err in e.messages:
                             errors.append(err)
 
-                    self.handle_error(this.start_line_number + i, cleaned_data, errors)
-            else:
-                # We've encountered an error, call the error handler
-                errors = []
-                for form in forms:
-                    for name, errs in form.errors.items():
-                        for err in errs:
-                            errors.append("{0}: {1}".format(name, err))
+                self.handle_error(this.start_line_number + i, cleaned_data, errors)
 
-                self.handle_error(this.start_line_number + i, data, errors)
+            # Process form errors
+
+            errors = []
+            for form in forms:
+                for name, errs in form.errors.items():
+                    for err in errs:
+                        errors.append("{0}: {1}".format(name, err))
+
+            self.handle_error(this.start_line_number + i, data, errors)
 
             # Now update the last processed row, transactionally
             @transactional
